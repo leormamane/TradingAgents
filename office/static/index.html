@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #8ec9ff;
+    --panel: #ffffff;
+    --ink: #1d2433;
+    --muted: #5b6577;
+    --line: #1d2433;
+    --accent: #ffb703;
+    --go: #2ec46d;
+    --stop: #ef476f;
+    --hold: #8d99ae;
+    --chip: #eef2f8;
+    --shadow: 0 5px 0 rgba(29,36,51,.9);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b2440; --panel: #252f4d; --ink: #f2f5fb; --muted: #aab4cc; --line: #0d1222; --chip: #323d60;
+      --shadow: 0 5px 0 rgba(5,8,18,.9);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b2440; --panel: #252f4d; --ink: #f2f5fb; --muted: #aab4cc; --line: #0d1222; --chip: #323d60;
+    --shadow: 0 5px 0 rgba(5,8,18,.9);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink);
+    font-family: "Fredoka", system-ui, sans-serif; }
+  #scene { position: fixed; inset: 0; }
+  #scene canvas { display: block; }
+
+  .card { background: var(--panel); border: 3px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+
+  /* Control deck */
+  #deck { position: fixed; top: 16px; left: 16px; width: 330px; padding: 14px; z-index: 5;
+    max-height: calc(100% - 32px); overflow: auto; }
+  #deck h1 { margin: 0 0 2px; font-size: 26px; font-weight: 700; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+  #deck h1 .logo { width: 28px; height: 28px; background: var(--accent); border: 3px solid var(--line); border-radius: 6px;
+    transform: rotate(12deg); display: inline-block; }
+  #deck .sub { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .row > * { flex: 1; min-width: 0; }
+  label.f { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .5px; }
+  input[type=text], input[type=date], select, input[list] {
+    width: 100%; font: inherit; font-size: 15px; padding: 7px 9px; border-radius: 10px; border: 2px solid var(--line);
+    background: var(--chip); color: var(--ink); }
+  #ticker { font-weight: 700; text-transform: uppercase; font-size: 20px; letter-spacing: 1px; }
+  .analysts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+  .tog { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px; border: 2px solid var(--line);
+    background: var(--chip); font-size: 14px; cursor: pointer; user-select: none; }
+  .tog input { accent-color: var(--go); width: 16px; height: 16px; }
+  .btn { font: inherit; font-weight: 700; font-size: 20px; width: 100%; padding: 10px; border-radius: 12px; cursor: pointer;
+    border: 3px solid var(--line); background: var(--go); color: #fff; box-shadow: 0 4px 0 var(--line);
+    text-shadow: 0 2px 0 rgba(0,0,0,.25); transition: transform .05s; }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--line); }
+  .btn:disabled { background: var(--hold); cursor: default; }
+  .btn.small { font-size: 14px; padding: 6px 10px; width: auto; box-shadow: 0 3px 0 var(--line); background: var(--accent); color: var(--ink); text-shadow: none; }
+  .warn { font-size: 13px; background: #fff3c4; color: #5a4300; border: 2px solid #c99a00; border-radius: 10px; padding: 6px 8px; margin-bottom: 8px; }
+  .warn code { font-weight: 600; }
+  .fine { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
+  #deckToggle { display: none; }
+
+  /* Feed */
+  #feed { position: fixed; top: 16px; right: 16px; bottom: 16px; width: 360px; z-index: 5; display: flex; flex-direction: column; }
+  #feed header { padding: 12px 14px 8px; display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid var(--line); }
+  #feed header b { font-size: 18px; }
+  #clock { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--muted); }
+  #items { overflow: auto; padding: 8px; flex: 1; }
+  .item { display: flex; gap: 8px; padding: 8px; border-radius: 12px; cursor: pointer; margin-bottom: 6px; background: var(--chip); border: 2px solid transparent; }
+  .item:hover { border-color: var(--line); }
+  .item .av { flex: 0 0 26px; height: 26px; border-radius: 6px; border: 2px solid var(--line); }
+  .item .who { font-weight: 600; font-size: 14px; }
+  .item .txt { font-size: 13px; color: var(--muted); line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .item.sys .who { color: var(--muted); }
+  .item.err { background: #ffd6de; color: #6b0019; }
+  .item.err .txt { color: #6b0019; }
+  .empty { color: var(--muted); text-align: center; padding: 30px 12px; font-size: 14px; }
+
+  /* Decision banner */
+  #banner { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(150%); z-index: 6;
+    padding: 12px 20px; display: flex; align-items: center; gap: 14px; visibility: hidden; opacity: 0;
+    transition: transform .4s cubic-bezier(.2,1.4,.4,1), opacity .3s, visibility .3s; }
+  #banner.show { transform: translateX(-50%) translateY(0); visibility: visible; opacity: 1; }
+  #banner .rating { font-size: 30px; font-weight: 700; padding: 2px 14px; border-radius: 10px; border: 3px solid var(--line); color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,.3); }
+  #banner .meta { font-size: 14px; color: var(--muted); }
+  #banner .meta b { color: var(--ink); font-size: 18px; }
+
+  /* Reader */
+  #reader { position: fixed; inset: 0; background: rgba(10,14,26,.55); z-index: 10; display: none; align-items: center; justify-content: center; padding: 16px; }
+  #reader.show { display: flex; }
+  #reader .card { width: min(720px, 100%); max-height: 86vh; display: flex; flex-direction: column; }
+  #reader header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 3px solid var(--line); }
+  #reader header .av { width: 30px; height: 30px; border-radius: 7px; border: 2px solid var(--line); }
+  #reader header b { flex: 1; font-size: 20px; }
+  #reader .body { padding: 6px 20px 18px; overflow: auto; line-height: 1.5; font-size: 15px; }
+  #reader .body table { border-collapse: collapse; font-size: 13px; }
+  #reader .body td, #reader .body th { border: 1px solid var(--muted); padding: 4px 6px; }
+  #reader .body pre { white-space: pre-wrap; }
+
+  /* In-world labels */
+  .tag { font-weight: 600; font-size: 12px; padding: 2px 8px; border-radius: 8px; background: rgba(29,36,51,.82); color: #fff;
+    white-space: nowrap; pointer-events: none; display: flex; align-items: center; gap: 5px; }
+  .tag .dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa5b8; }
+  .tag.working .dot { background: var(--accent); animation: pulse .8s infinite alternate; }
+  .tag.done .dot { background: var(--go); }
+  .tag.off { opacity: .45; }
+  @keyframes pulse { to { transform: scale(1.6); } }
+  .bubble { max-width: 220px; background: #fff; color: #1d2433; border: 3px solid #1d2433; border-radius: 14px; padding: 7px 10px;
+    font-size: 13px; line-height: 1.3; cursor: pointer; position: relative; margin-bottom: 12px; box-shadow: 0 3px 0 #1d2433; opacity: 0;
+    transform: translateY(8px) scale(.9); transition: opacity .2s, transform .2s; pointer-events: none; }
+  .bubble.show { opacity: 1; transform: none; pointer-events: auto; }
+  .bubble::after { content: ""; position: absolute; left: 50%; bottom: -11px; margin-left: -8px; border: 8px solid transparent; border-top-color: #1d2433; border-bottom: 0; }
+  .bubble.think { font-size: 18px; font-weight: 700; padding: 2px 10px; letter-spacing: 2px; }
+  .bubble.tool { background: #e7f6ff; }
+
+  @media (max-width: 860px) {
+    #deck { width: auto; right: 16px; max-height: 60vh; }
+    #deck.collapsed .body { display: none; }
+    #deckToggle { display: inline-flex; float: right; margin-top: -2px; }
+    #feed { top: auto; left: 16px; right: 16px; width: auto; height: 34vh; }
+    #banner { bottom: calc(34vh + 28px); width: calc(100% - 32px); justify-content: center; flex-wrap: wrap; }
+    .bubble { max-width: 160px; font-size: 12px; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/static/vendor/three.module.js",
+  "three/addons/controls/OrbitControls.js": "/static/vendor/addons/OrbitControls.js",
+  "three/addons/renderers/CSS2DRenderer.js": "/static/vendor/addons/CSS2DRenderer.js"
+} }
+</script>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+</head>
+<body>
+<div id="scene"></div>
+
+<section id="deck" class="card">
+  <h1><span class="logo"></span>Trading Office <button id="deckToggle" class="btn small" type="button">Menu</button></h1>
+  <div class="body">
+    <div class="sub">Your AI trading desk. Pick a stock and watch the team argue it out.</div>
+    <div class="row">
+      <div><label class="f" for="ticker">Ticker</label><input id="ticker" type="text" value="NVDA" maxlength="16" autocomplete="off"></div>
+      <div><label class="f" for="date">Date</label><input id="date" type="date"></div>
+    </div>
+    <label class="f">Analysts</label>
+    <div class="analysts">
+      <label class="tog"><input type="checkbox" value="market" checked>Market</label>
+      <label class="tog"><input type="checkbox" value="social" checked>Sentiment</label>
+      <label class="tog"><input type="checkbox" value="news" checked>News</label>
+      <label class="tog"><input type="checkbox" value="fundamentals" checked>Fundamentals</label>
+    </div>
+    <div class="row">
+      <div><label class="f" for="provider">Provider</label><select id="provider"></select></div>
+      <div><label class="f" for="depth">Debate rounds</label>
+        <select id="depth"><option value="1">1 (fast)</option><option value="2">2</option><option value="3">3 (deep)</option></select></div>
+    </div>
+    <div class="row">
+      <div><label class="f" for="quick">Quick model</label><input id="quick" list="quickList" autocomplete="off"><datalist id="quickList"></datalist></div>
+      <div><label class="f" for="deep">Deep model</label><input id="deep" list="deepList" autocomplete="off"><datalist id="deepList"></datalist></div>
+    </div>
+    <div id="keyWarn" class="warn" hidden></div>
+    <label class="tog" style="margin-bottom:10px"><input id="demo" type="checkbox">Demo mode (sample run, no API key, free)</label>
+    <button id="run" class="btn" type="button">▶ Start the day</button>
+    <div class="row" style="margin-top:8px">
+      <label class="tog"><input id="follow" type="checkbox" checked>Camera follows</label>
+      <button id="reset" class="btn small" type="button">Reset view</button>
+    </div>
+    <div class="fine">Drag to orbit, scroll to zoom, click a worker or a bubble to read what they said.
+      Research tool, not financial advice. No trades are placed.</div>
+  </div>
+</section>
+
+<section id="feed" class="card">
+  <header><b>Office chatter</b><span id="clock">00:00</span></header>
+  <div id="items"><div class="empty">The office is quiet. Press <b>Start the day</b>.</div></div>
+</section>
+
+<div id="banner" class="card">
+  <span class="rating" id="bRating">HOLD</span>
+  <div class="meta"><b id="bTicker">NVDA</b><br><span id="bSub">Final call from the Portfolio Manager</span></div>
+  <a id="bReport" class="btn small" target="_blank" rel="noopener" hidden>Full report</a>
+</div>
+
+<div id="reader"><div class="card">
+  <header><span class="av" id="rAv"></span><b id="rWho"></b><button class="btn small" id="rClose" type="button">Close</button></header>
+  <div class="body" id="rBody"></div>
+</div></div>
+
+<script type="module" src="/static/office.js"></script>
+</body>
+</html>
