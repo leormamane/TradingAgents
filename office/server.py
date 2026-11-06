@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from office import demo
+from office import broker, demo
 
 STATIC = Path(__file__).parent / "static"
 
@@ -54,6 +54,8 @@ PROVIDERS = ["openai", "anthropic", "google", "xai", "deepseek", "openrouter", "
 
 _run_lock = threading.Lock()
 _reports: dict[str, Path] = {}
+# Real decisions by id. Only these can become paper orders; demo ratings never do.
+_decisions: dict[str, dict] = {}
 
 
 def tool_owner(name: str) -> str | None:
@@ -153,7 +155,17 @@ def live_run(params: dict, emit) -> None:
     emit({"type": "log", "text": f"Booting the office for {ticker} on {date} "
           f"({config['llm_provider']}: {config['quick_think_llm']} / {config['deep_think_llm']})"})
     graph = TradingAgentsGraph(analysts, config=config, debug=False)
-    init_state = graph.create_run_state(ticker, date, asset_type.value)
+    portfolio = None
+    if params.get("use_book") and broker.configured():
+        try:
+            portfolio = broker.portfolio_context(broker.Alpaca())
+            held = portfolio.position_in(ticker)
+            emit({"type": "log", "text": "Agents see your Alpaca paper account: "
+                  f"${portfolio.cash:,.0f} cash, "
+                  f"{f'{held.quantity:g} {ticker} held' if held else f'no {ticker} held'}."})
+        except broker.BrokerError as exc:
+            emit({"type": "log", "text": f"Could not read the paper account, running without it: {exc}"})
+    init_state = graph.create_run_state(ticker, date, asset_type.value, portfolio)
     args = graph.propagator.get_graph_args()
 
     for a in analysts:
@@ -256,7 +268,10 @@ def live_run(params: dict, emit) -> None:
             _reports[report_id] = html
     except Exception as exc:  # the decision stands even if saving fails
         emit({"type": "log", "text": f"Report could not be saved: {exc}"})
+    decision_id = uuid.uuid4().hex
+    _decisions[decision_id] = {"ticker": ticker, "rating": rating, "date": date}
     emit({"type": "decision", "rating": rating, "ticker": ticker, "date": date,
+          "decision_id": decision_id, "broker": broker.configured(),
           "report": f"/api/report/{report_id}" if report_id else None})
 
 
@@ -284,11 +299,66 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(office_config()).encode(), "application/json")
         if url.path == "/api/run":
             return self._run(parse_qs(url.query))
+        if url.path == "/api/broker":
+            return self._json(200, self._broker_summary())
         if url.path.startswith("/api/report/"):
             path = _reports.get(url.path.rsplit("/", 1)[-1])
             if path and path.exists():
                 return self._send(200, path.read_bytes(), "text/html; charset=utf-8")
         self._send(404, b"Not found", "text/plain")
+
+    def _json(self, status, obj):
+        self._send(status, json.dumps(obj).encode(), "application/json")
+
+    @staticmethod
+    def _broker_summary() -> dict:
+        if not broker.configured():
+            return {"configured": False,
+                    "reason": "Add APCA_API_KEY_ID and APCA_API_SECRET_KEY (paper keys) to .env and restart."}
+        try:
+            return broker.summary(broker.Alpaca())
+        except broker.BrokerError as exc:
+            return {"configured": True, "error": str(exc)}
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        # Only this page may post: a JSON body with a custom header forces a CORS
+        # preflight, which this server never approves, so other sites cannot.
+        if (self.headers.get("X-Office") != "1"
+                or not (self.headers.get("Content-Type") or "").startswith("application/json")):
+            return self._json(403, {"error": "Forbidden"})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(min(length, 10_000)) or b"{}")
+        except ValueError:
+            return self._json(400, {"error": "Bad JSON"})
+        decision = _decisions.get(str(body.get("decision_id", "")))
+        if url.path not in ("/api/broker/plan", "/api/broker/order"):
+            return self._json(404, {"error": "Not found"})
+        if not decision:
+            return self._json(404, {"error": "Unknown decision. Only a finished real run can be traded."})
+        try:
+            client = broker.Alpaca()
+            plan = broker.build_plan(client, decision["ticker"], decision["rating"])
+            if url.path == "/api/broker/plan":
+                return self._json(200, {"plan": plan.to_dict()})
+            # Place only what the person saw: if the plan moved since, show it again.
+            if plan.action != body.get("action") or plan.qty != body.get("qty"):
+                return self._json(409, {"error": "The order changed since you saw it. Check it and confirm again.",
+                                        "plan": plan.to_dict()})
+            if plan.action == "none":
+                return self._json(400, {"error": plan.reason, "plan": plan.to_dict()})
+            if decision.get("order_id"):
+                return self._json(409, {"error": "An order was already placed for this decision."})
+            order = client.submit(plan.symbol, plan.action, plan.qty,
+                                  client_order_id=f"office-{body['decision_id'][:20]}")
+            decision["order_id"] = order.get("id")
+            return self._json(200, {"order": {"id": order.get("id"), "status": order.get("status"),
+                                              "side": order.get("side"), "qty": order.get("qty"),
+                                              "symbol": order.get("symbol")},
+                                    "plan": plan.to_dict()})
+        except broker.BrokerError as exc:
+            return self._json(502, {"error": str(exc)})
 
     def _static(self, name: str):
         path = (STATIC / name).resolve()
@@ -308,6 +378,7 @@ class Handler(BaseHTTPRequestHandler):
             "deep": get("deep"),
             "analysts": [a for a in get("analysts", "market,social,news,fundamentals").split(",") if a],
             "depth": max(1, min(5, int(get("depth", "1") or 1))),
+            "use_book": get("book") == "1",
         }
         is_demo = get("demo") == "1"
 

@@ -555,6 +555,7 @@ function resetOffice(analysts) {
   }
   items.innerHTML = ""; feedLog.length = 0;
   $("banner").classList.remove("show");
+  $("ticket").hidden = true;
   tradingScreens.forEach((t) => (t.mode = "flat"));
 }
 function finish() {
@@ -576,7 +577,7 @@ $("run").onclick = () => {
   running = true; started = performance.now();
   $("run").disabled = true; $("run").textContent = demo ? "Demo running…" : "Team at work…";
   const q = new URLSearchParams({ ticker: currentTicker, date: $("date").value, analysts: analysts.join(","),
-    depth: $("depth").value, demo: demo ? "1" : "0" });
+    depth: $("depth").value, demo: demo ? "1" : "0", book: broker?.configured && $("book").checked ? "1" : "0" });
   if (cfg && !demo) { q.set("provider", $("provider").value); q.set("quick", $("quick").value.trim()); q.set("deep", $("deep").value.trim()); }
   if (!cfg) return localDemo(analysts);
   es = new EventSource("/api/run?" + q);
@@ -605,6 +606,7 @@ function handle(ev) {
       $("bSub").textContent = ev.demo ? "Demo call (sample text)" : `Final call · ${ev.date}`;
       const link = $("bReport");
       if (ev.report) { link.href = ev.report; link.hidden = false; } else link.hidden = true;
+      showTicket(ev);
       $("banner").classList.add("show");
       burst(team.portfolio_manager.root.position);
       for (const id of Object.keys(team)) if (team[id].state !== "off") team[id].jumpT = 0.6 + Math.random() * 0.3;
@@ -613,6 +615,76 @@ function handle(ev) {
     }
   }
 }
+// ---------------------------------------------------------------- Alpaca paper account
+let broker = null, ticketPlan = null, ticketDecision = null;
+const usd = (n) => (n == null ? "–" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
+const esc = (t) => String(t).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
+async function loadBroker() {
+  const body = $("acctBody");
+  try {
+    broker = await (await fetch("/api/broker")).json();
+  } catch {
+    broker = null; body.textContent = "Needs the office server."; return;
+  }
+  $("bookTog").hidden = !(broker.configured && !broker.error);
+  if (!broker.configured) { body.innerHTML = `Not connected. ${esc(broker.reason)}`; return; }
+  if (broker.error) { body.innerHTML = `<span class="down">${esc(broker.error)}</span>`; return; }
+  const pos = broker.positions.map((p) =>
+    `<div class="pos"><span>${esc(p.symbol)} × ${p.qty}</span><span class="${p.unrealized_pl >= 0 ? "up" : "down"}">${usd(p.market_value)} (${p.unrealized_pl >= 0 ? "+" : ""}${usd(p.unrealized_pl)})</span></div>`).join("");
+  body.innerHTML = `Equity <span class="num">${usd(broker.equity)}</span> · Cash <span class="num">${usd(broker.cash)}</span>
+    ${pos || "<div>No positions yet.</div>"}
+    <div style="margin-top:4px">Full Buy = ${broker.limits.max_position_pct}% of equity · max ${usd(broker.limits.max_order_usd)} per order</div>`;
+}
+$("acctRefresh").onclick = loadBroker;
+
+function renderPlan(p) {
+  ticketPlan = p;
+  const verb = p.action === "buy" ? "BUY" : p.action === "sell" ? "SELL" : "NO ORDER";
+  $("tkLine").textContent = p.action === "none" ? `${verb} · ${p.symbol}` : `${verb} ${p.qty} ${p.symbol}  ≈ ${usd(p.est_value)}`;
+  $("tkLine").className = "tk-line " + (p.action === "buy" ? "up" : p.action === "sell" ? "down" : "");
+  $("tkWhy").textContent = p.reason;
+  $("tkPlace").hidden = p.action === "none";
+  $("tkPlace").textContent = `Place paper ${p.action} order`;
+  $("tkPlace").disabled = false;
+}
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Office": "1" }, body: JSON.stringify(body) });
+  return { status: r.status, data: await r.json().catch(() => ({})) };
+}
+async function showTicket(ev) {
+  const t = $("ticket");
+  $("tkMsg").textContent = ""; $("tkPlace").hidden = true; ticketDecision = ev.decision_id;
+  if (ev.demo || !ev.decision_id) {
+    t.hidden = false; $("tkLine").textContent = "No order in demo mode"; $("tkLine").className = "tk-line";
+    $("tkWhy").textContent = "Run a real analysis to get a paper order you can place."; return;
+  }
+  if (!ev.broker) {
+    t.hidden = false; $("tkLine").textContent = "Paper trading is off"; $("tkLine").className = "tk-line";
+    $("tkWhy").textContent = "Add your Alpaca paper keys to .env and restart to trade this call."; return;
+  }
+  t.hidden = false; $("tkLine").textContent = "Working out the order…"; $("tkWhy").textContent = "";
+  const { status, data } = await post("/api/broker/plan", { decision_id: ev.decision_id });
+  if (status === 200) renderPlan(data.plan);
+  else { $("tkLine").textContent = "Could not plan an order"; $("tkWhy").textContent = data.error || `Error ${status}`; }
+}
+$("tkPlace").onclick = async () => {
+  if (!ticketPlan || ticketPlan.action === "none") return;
+  const b = $("tkPlace"); b.disabled = true; $("tkMsg").textContent = "Sending…"; $("tkMsg").className = "tk-msg";
+  const { status, data } = await post("/api/broker/order", { decision_id: ticketDecision, action: ticketPlan.action, qty: ticketPlan.qty });
+  if (status === 200) {
+    const o = data.order;
+    b.hidden = true;
+    $("tkMsg").textContent = `Order sent: ${o.side} ${o.qty} ${o.symbol} (${o.status}).`; $("tkMsg").className = "tk-msg up";
+    addFeed("trader", `Placed a paper ${o.side} order for ${o.qty} ${o.symbol} on Alpaca. Status: ${o.status}. Market orders fill at the next open if the market is closed.`);
+    team.trader.jumpT = 0.6; focusId = "trader";
+    tradingScreens.forEach((t) => (t.mode = o.side === "buy" ? "up" : "down"));
+    setTimeout(loadBroker, 2500);
+  } else {
+    if (data.plan) renderPlan(data.plan); else b.disabled = false;
+    $("tkMsg").textContent = data.error || `Error ${status}`; $("tkMsg").className = "tk-msg down";
+  }
+};
+
 // Offline fallback: the same demo script, played in the page.
 function localDemo(analysts) {
   const T = currentTicker, N = "\n\n_(Demo mode: sample text.)_";
@@ -706,4 +778,5 @@ function frame() {
 drawBoard();
 tradingScreens.forEach(drawChart);
 loadConfig();
+loadBroker();
 frame();

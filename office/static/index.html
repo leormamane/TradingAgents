@@ -64,6 +64,22 @@
   .btn.small { font-size: 14px; padding: 6px 10px; width: auto; box-shadow: 0 3px 0 var(--line); background: var(--accent); color: var(--ink); text-shadow: none; }
   .warn { font-size: 13px; background: #fff3c4; color: #5a4300; border: 2px solid #c99a00; border-radius: 10px; padding: 6px 8px; margin-bottom: 8px; }
   .warn code { font-weight: 600; }
+  .acct { border: 2px dashed var(--line); border-radius: 12px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+  .acct-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 14px; }
+  .acct-body { color: var(--muted); line-height: 1.4; }
+  .acct-body .num { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .acct-body .pos { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  .acct .tog { margin-top: 6px; font-size: 13px; }
+  .up { color: #1f9d55; } .down { color: #d6335c; }
+  button.link { font: inherit; font-size: 12px; background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; padding: 0; }
+  #banner { flex-wrap: wrap; max-width: calc(100% - 32px); }
+  #ticket { flex-basis: 100%; border-top: 3px solid var(--line); padding-top: 10px; margin-top: 2px; max-width: 520px; }
+  .tk-head { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .tk-line { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tk-why { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+  .tk-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .tk-msg { font-size: 13px; font-weight: 600; }
+  .btn.small.go { background: var(--go); color: #fff; text-shadow: 0 1px 0 rgba(0,0,0,.25); }
   .fine { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
   #deckToggle { display: none; }
 
@@ -167,6 +183,11 @@
       <div><label class="f" for="deep">Deep model</label><input id="deep" list="deepList" autocomplete="off"><datalist id="deepList"></datalist></div>
     </div>
     <div id="keyWarn" class="warn" hidden></div>
+    <div id="acct" class="acct">
+      <div class="acct-head"><b>Alpaca paper account</b><button id="acctRefresh" class="link" type="button">refresh</button></div>
+      <div id="acctBody" class="acct-body">Checking…</div>
+      <label class="tog" id="bookTog" hidden><input id="book" type="checkbox" checked>Agents see my paper holdings</label>
+    </div>
     <label class="tog" style="margin-bottom:10px"><input id="demo" type="checkbox">Demo mode (sample run, no API key, free)</label>
     <button id="run" class="btn" type="button">▶ Start the day</button>
     <div class="row" style="margin-top:8px">
@@ -174,7 +195,7 @@
       <button id="reset" class="btn small" type="button">Reset view</button>
     </div>
     <div class="fine">Drag to orbit, scroll to zoom, click a worker or a bubble to read what they said.
-      Research tool, not financial advice. No trades are placed.</div>
+      Research tool, not financial advice. Orders go only to an Alpaca <b>paper</b> account, and only when you click Place.</div>
   </div>
 </section>
 
@@ -187,6 +208,15 @@
   <span class="rating" id="bRating">HOLD</span>
   <div class="meta"><b id="bTicker">NVDA</b><br><span id="bSub">Final call from the Portfolio Manager</span></div>
   <a id="bReport" class="btn small" target="_blank" rel="noopener" hidden>Full report</a>
+  <div id="ticket" hidden>
+    <div class="tk-head">Alpaca paper order</div>
+    <div id="tkLine" class="tk-line"></div>
+    <div id="tkWhy" class="tk-why"></div>
+    <div class="tk-actions">
+      <button id="tkPlace" class="btn small go" type="button" hidden>Place paper order</button>
+      <span id="tkMsg" class="tk-msg"></span>
+    </div>
+  </div>
 </div>
 
 <div id="reader"><div class="card">
