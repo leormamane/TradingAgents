@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from office import broker, demo
+from office import broker, costs, demo
 
 STATIC = Path(__file__).parent / "static"
 
@@ -51,6 +51,16 @@ TOOL_HINTS = [
 PROVIDERS = ["openai", "anthropic", "google", "xai", "deepseek", "openrouter", "ollama",
              "mistral", "groq", "qwen", "glm", "minimax", "kimi", "nvidia", "azure",
              "chatgpt", "openai_compatible"]
+
+# Newer than the project's own menus; shown first.
+CURRENT_MODELS = {
+    "anthropic": {
+        "quick": [{"label": "Claude Sonnet 5.5 - $2/$10 per M tokens", "value": "claude-sonnet-5-5"},
+                  {"label": "Claude Haiku 5.5 - $0.10/$0.50, cheapest", "value": "claude-haiku-5-5"}],
+        "deep": [{"label": "Claude Opus 5.5 - $4/$20 per M tokens", "value": "claude-opus-5-5"},
+                 {"label": "Claude Sonnet 5.5 - $2/$10", "value": "claude-sonnet-5-5"}],
+    },
+}
 
 _run_lock = threading.Lock()
 _reports: dict[str, Path] = {}
@@ -89,6 +99,7 @@ def openrouter_models(limit: int = 40) -> list[dict]:
         return []
     main = [m for m in data if not m["id"].startswith("~")
             and m["id"].split("/", 1)[0] in _OPENROUTER_MAINSTREAM]
+    costs.set_openrouter_prices(data)
     models = [{"label": m.get("name") or m["id"], "value": m["id"]} for m in (main or data)[:limit]]
     _openrouter_cache = (time.time(), models)
     return models
@@ -108,6 +119,10 @@ def office_config() -> dict:
         elif p in MODEL_OPTIONS:
             quick = [{"label": l, "value": v} for l, v in MODEL_OPTIONS[p]["quick"]]
             deep = [{"label": l, "value": v} for l, v in MODEL_OPTIONS[p]["deep"]]
+            for tier, extra in CURRENT_MODELS.get(p, {}).items():
+                listed = quick if tier == "quick" else deep
+                known = {o["value"] for o in listed}
+                listed[:0] = [o for o in extra if o["value"] not in known]
         else:
             quick = deep = []  # any model ID; typed into the box
         providers.append({
@@ -127,6 +142,41 @@ def office_config() -> dict:
 
 
 def live_run(params: dict, emit) -> None:
+    """A real run, metered: refused if the day's limit is spent, stopped if it is reached
+    mid-run, and recorded in the spend ledger either way."""
+    ticker = params["ticker"].strip().upper()
+    provider, quick, deep = params["provider"], params.get("quick") or "", params.get("deep") or ""
+    limit, spent = costs.daily_limit(), costs.spent_on()
+    if limit is not None and spent >= limit:
+        raise costs.LimitReached(f"Today's limit of ${limit:,.2f} is spent (${spent:,.2f}). "
+                                 "Raise OFFICE_DAILY_LIMIT_USD in .env to run more today.")
+    estimate = costs.estimate_run((provider, quick), (provider, deep), params["depth"])
+    if limit is not None and estimate is not None and spent + estimate > limit:
+        raise costs.LimitReached(
+            f"This run is estimated at about ${estimate:,.2f}, and only ${limit - spent:,.2f} of today's "
+            f"${limit:,.2f} limit is left. Pick cheaper models or raise OFFICE_DAILY_LIMIT_USD.")
+    if estimate is None:
+        emit({"type": "log", "text": "No price known for these models, so this run's cost can't be shown "
+              "or limited. Add them to office/prices.json."})
+    else:
+        emit({"type": "log", "text": f"Estimated cost of this run: about ${estimate:,.2f}."})
+
+    meter = costs.RunMeter({quick: provider, deep: provider}, spent, limit,
+                           on_update=lambda snap: emit({"type": "cost", **snap}))
+    status, rating = "error", None
+    try:
+        rating = _office_run(params, emit, meter)
+        status = "done"
+    except costs.LimitReached:
+        status = "stopped at limit"
+        raise
+    finally:
+        if meter.calls:
+            costs.record(meter.ledger_row(ticker, status, rating))
+            emit({"type": "cost", **meter.snapshot(), "final": True})
+
+
+def _office_run(params: dict, emit, meter) -> str:
     """Run TradingAgents for real and translate its stream into office events."""
     from cli.models import AnalystType
     from cli.prompts import detect_asset_type, filter_analysts_for_asset_type
@@ -154,7 +204,7 @@ def live_run(params: dict, emit) -> None:
 
     emit({"type": "log", "text": f"Booting the office for {ticker} on {date} "
           f"({config['llm_provider']}: {config['quick_think_llm']} / {config['deep_think_llm']})"})
-    graph = TradingAgentsGraph(analysts, config=config, debug=False)
+    graph = TradingAgentsGraph(analysts, config=config, debug=False, callbacks=[meter])
     portfolio = None
     if params.get("use_book") and broker.configured():
         try:
@@ -273,6 +323,7 @@ def live_run(params: dict, emit) -> None:
     emit({"type": "decision", "rating": rating, "ticker": ticker, "date": date,
           "decision_id": decision_id, "broker": broker.configured(),
           "report": f"/api/report/{report_id}" if report_id else None})
+    return rating
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -299,6 +350,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(office_config()).encode(), "application/json")
         if url.path == "/api/run":
             return self._run(parse_qs(url.query))
+        if url.path == "/api/spend":
+            return self._json(200, costs.summary())
         if url.path == "/api/broker":
             return self._json(200, self._broker_summary())
         if url.path.startswith("/api/report/"):
@@ -396,6 +449,8 @@ class Handler(BaseHTTPRequestHandler):
             def work():
                 try:
                     (demo.play if is_demo else live_run)(params, events.put)
+                except costs.LimitReached as exc:
+                    events.put({"type": "error", "message": str(exc), "limit": True})
                 except Exception as exc:
                     traceback.print_exc()
                     events.put({"type": "error", "message": f"{type(exc).__name__}: {exc}"})

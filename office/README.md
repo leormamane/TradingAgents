@@ -16,6 +16,27 @@ python -m office.server            # then open http://localhost:8765
 - Uses only the standard library on top of TradingAgents. Three.js, marked and DOMPurify are bundled in `static/vendor/`, so the page works offline.
 - Only one run at a time.
 
+## Cost meter and daily limit
+
+The right panel shows what the current run has cost and today's total against your
+daily limit. Click it for a table of recent runs. Every model call is priced by the
+model that made it, so a cheap quick model and a pricier deep model are counted right.
+
+```
+OFFICE_DAILY_LIMIT_USD=10     # default 10; "off" for no limit
+```
+
+- Before a run: refused if today's limit is spent, or if the run's estimated cost
+  (about $1.35 with Sonnet 5.5 + Opus 5.5, $0.25 with Haiku 5.5 + Sonnet 5.5) would not fit.
+- During a run: checked before every model call, so a run that reaches the limit is
+  stopped right there. A day can go over by at most one call.
+- Every run, finished or stopped, is written to `~/.tradingagents/office/spend.jsonl`.
+- Prices: Claude list prices are built in, OpenRouter's come from OpenRouter, Ollama is
+  free. For other models, add `office/prices.json`, in dollars per million tokens:
+  `{"gpt-6-luna": {"input": 0.5, "output": 2}}`. A model with no price shows its tokens
+  and a "+?" on the cost, and the limit can't count it.
+- These are list prices; your provider's bill is the final word.
+
 ## Alpaca paper trading
 
 After a real run, the result banner shows the order the rating calls for, and a
@@ -53,4 +74,4 @@ the market is closed fill at the next open.
 With **Agents see my paper holdings** on, the run is given your paper cash and positions,
 so the trader, risk team and portfolio manager reason about what you actually hold.
 
-Tests: `python -m pytest office/test_broker.py -q` (Alpaca is faked; no network).
+Tests: `python -m pytest office -q` (Alpaca and the models are faked; no network).

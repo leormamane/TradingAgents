@@ -88,6 +88,13 @@
   #feed header { padding: 12px 14px 8px; display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid var(--line); }
   #feed header b { font-size: 18px; }
   #clock { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--muted); }
+  .meter { padding: 8px 14px 10px; border-bottom: 3px solid var(--line); cursor: pointer; font-size: 13px; }
+  .m-row { display: flex; justify-content: space-between; color: var(--muted); }
+  .m-row b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .m-bar { border-radius: 6px; background: var(--chip); border: 2px solid var(--line); margin-top: 5px; overflow: hidden; }
+  .m-bar i { display: block; height: 8px; width: 0; background: var(--go); transition: width .4s; }
+  .m-bar.m-warn i { background: var(--accent); } .m-bar.m-full i { background: var(--stop); }
+  .m-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
   #items { overflow: auto; padding: 8px; flex: 1; }
   .item { display: flex; gap: 8px; padding: 8px; border-radius: 12px; cursor: pointer; margin-bottom: 6px; background: var(--chip); border: 2px solid transparent; }
   .item:hover { border-color: var(--line); }
@@ -201,6 +208,12 @@
 
 <section id="feed" class="card">
   <header><b>Office chatter</b><span id="clock">00:00</span></header>
+  <div id="meter" class="meter" title="What model calls have cost. Click for recent runs.">
+    <div class="m-row"><span>This run</span><b id="mRun">$0.00</b></div>
+    <div class="m-row"><span>Today</span><b id="mDay">$0.00</b></div>
+    <div class="m-bar"><i id="mBar"></i></div>
+    <div id="mNote" class="m-note"></div>
+  </div>
   <div id="items"><div class="empty">The office is quiet. Press <b>Start the day</b>.</div></div>
 </section>
 

@@ -573,6 +573,7 @@ $("run").onclick = () => {
   currentTicker = ($("ticker").value || "NVDA").toUpperCase();
   const demo = $("demo").checked || !cfg;
   resetOffice(analysts);
+  $("mRun").textContent = "$0.00";
   drawBoard("ANALYZING…");
   running = true; started = performance.now();
   $("run").disabled = true; $("run").textContent = demo ? "Demo running…" : "Team at work…";
@@ -595,7 +596,8 @@ function handle(ev) {
       if (ev.agent && team[ev.agent]) showBubble(ev.agent, "📞 " + ev.name.replace(/^get_/, "").replace(/_/g, " "), "tool", 2.5);
       break;
     case "log": addFeed(null, ev.text, "sys"); break;
-    case "error": addFeed(null, ev.message, "err"); drawBoard("SOMETHING BROKE"); break;
+    case "error": addFeed(null, ev.message, "err"); drawBoard(ev.limit ? "DAILY LIMIT REACHED" : "SOMETHING BROKE"); loadSpend(); break;
+    case "cost": showCost(ev); break;
     case "decision": {
       drawBoard(`${ev.date}${ev.demo ? " · DEMO" : ""}`, ev.rating);
       const up = ["Buy", "Overweight"].includes(ev.rating), down = ["Sell", "Underweight"].includes(ev.rating);
@@ -615,6 +617,38 @@ function handle(ev) {
     }
   }
 }
+// ---------------------------------------------------------------- cost meter
+const money = (n) => "$" + (n < 10 ? n.toFixed(2) : n.toFixed(0));
+let spend = null;
+function paintDay(today, limit) {
+  $("mDay").textContent = limit ? `${money(today)} of ${money(limit)}` : `${money(today)} (no limit)`;
+  const pct = limit ? Math.min(100, (today / limit) * 100) : 0;
+  $("mBar").style.width = pct + "%";
+  $("mBar").parentElement.className = "m-bar" + (pct >= 100 ? " m-full" : pct >= 75 ? " m-warn" : "");
+}
+function showCost(ev) {
+  $("mRun").textContent = money(ev.cost) + (ev.unpriced?.length ? " +?" : "");
+  paintDay(ev.today, ev.limit);
+  $("mNote").textContent = ev.unpriced?.length
+    ? `No price for ${ev.unpriced.join(", ")}; add it to office/prices.json.`
+    : `${ev.calls} model calls · ${(ev.tokens_in / 1000).toFixed(0)}k in / ${(ev.tokens_out / 1000).toFixed(0)}k out`;
+  if (ev.final) loadSpend(true);
+}
+async function loadSpend(keepNote) {
+  try { spend = await (await fetch("/api/spend")).json(); } catch { $("meter").hidden = true; return; }
+  $("meter").hidden = false;
+  paintDay(spend.today, spend.limit);
+  if (!keepNote) $("mNote").textContent = spend.recent.length ? `${spend.recent.length} recent runs · click for details` : "No runs yet today.";
+}
+$("meter").onclick = () => {
+  if (!spend) return;
+  const rows = spend.recent.map((r) => `| ${r.at.replace("T", " ").slice(5, 16)} | ${r.ticker} | ${r.rating || r.status} | $${(r.cost || 0).toFixed(2)} | ${r.calls} | ${Math.round(r.seconds / 60)} min |`).join("\n");
+  const lim = spend.limit ? `$${spend.limit.toFixed(2)} (set OFFICE_DAILY_LIMIT_USD in .env)` : "off";
+  openReader(null, `## Spending\n\n**Today:** $${spend.today.toFixed(2)} · **Daily limit:** ${lim}\n\n` +
+    (rows ? `| When | Ticker | Result | Cost | Calls | Time |\n|---|---|---|---|---|---|\n${rows}` : "_No runs recorded yet._") +
+    "\n\nPrices are list prices per model; your provider's bill is the final word.");
+};
+
 // ---------------------------------------------------------------- Alpaca paper account
 let broker = null, ticketPlan = null, ticketDecision = null;
 const usd = (n) => (n == null ? "–" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
@@ -779,4 +813,5 @@ drawBoard();
 tradingScreens.forEach(drawChart);
 loadConfig();
 loadBroker();
+loadSpend();
 frame();
