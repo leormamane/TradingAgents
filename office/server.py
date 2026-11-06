@@ -356,7 +356,15 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     a = ap.parse_args()
-    server = ThreadingHTTPServer((a.host, a.port), Handler)
+    try:
+        server = ThreadingHTTPServer((a.host, a.port), Handler)
+    except OSError as exc:
+        if exc.errno in (48, 98):  # address already in use (macOS, Linux)
+            raise SystemExit(
+                f"Port {a.port} is already in use. The office may already be running at "
+                f"http://{a.host}:{a.port}; otherwise pick another port: "
+                f"python -m office.server --port {a.port + 1}")
+        raise
     print(f"Trading Office open at http://{a.host}:{a.port}  (Ctrl+C to stop)")
     try:
         server.serve_forever()
